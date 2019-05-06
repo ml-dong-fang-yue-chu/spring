@@ -1,5 +1,11 @@
 package com.ml.spring.framework.webmvc;
 
+import com.ml.spring.framework.annotation.MLAutoWired;
+import com.ml.spring.framework.annotation.MLController;
+import com.ml.spring.framework.annotation.MLRequestMapping;
+import com.ml.spring.framework.annotation.MLService;
+import org.apache.commons.lang3.StringUtils;
+
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
@@ -8,11 +14,11 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.URI;
 import java.net.URL;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Properties;
+import java.util.*;
 
 /**
  * @ClassName MlDispatcherServlet
@@ -32,16 +38,24 @@ public class MlDispatcherServlet  extends HttpServlet {
     //保存扫描到的className
     private final List<String> classNames = new ArrayList<>();
 
+    //存放实例化的容器
+    private final Map<String,Object> beanMaps = new HashMap<String,Object>();
+    //存放url和method的容器
+    private final Map<String,Method> handleMappings = new HashMap<String,Method>();
 
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
-        super.doGet(req, resp);
+        this.doPost(req,resp);
     }
 
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
-        super.doPost(req, resp);
+        doDispatch(req,resp);
+    }
+
+    private void doDispatch(HttpServletRequest req, HttpServletResponse resp) {
+        String url = req.getRequestURI();
     }
 
     @Override
@@ -60,13 +74,111 @@ public class MlDispatcherServlet  extends HttpServlet {
     }
 
     private void initHandlerMapping() {
+        //在spring中是处理的url和controller的对应关系，调用方法时，再通过反射去调用当前类中的方法
+        if(classNames.isEmpty()){
+            return;
+        }
+        for (String className : classNames) {
+            try {
+                Class<?> clazz = Class.forName(className);
+                if(!clazz.isAnnotationPresent(MLController.class)){
+                    continue;
+                }
+                String baseUrl = "";
+                if(clazz.isAnnotationPresent(MLRequestMapping.class)){
+                    MLRequestMapping requestMapping = clazz.getAnnotation(MLRequestMapping.class);
+                    //根路径
+                    baseUrl = requestMapping.value();
+                }
+                //获取类中所有的方法
+                for (Method method : clazz.getMethods()) {
+                    //这里只处理公共的方法，遵循oop原则
+                   if(!method.isAnnotationPresent(MLRequestMapping.class)){
+                       continue;
+                   }
+                   MLRequestMapping requestMapping = method.getAnnotation(MLRequestMapping.class);
+                   String url ="/"+ baseUrl + "/"+requestMapping.value().replaceAll("/+","/");
+                   handleMappings.put(url,method);
+                   System.out.println("url:"+url+" method:"+method);
+                }
+            } catch (ClassNotFoundException e) {
+                e.printStackTrace();
+            }
+        }
+
     }
 
     private void doAutowired() {
+        if(beanMaps.isEmpty()){
+            return;
+        }
+        for (Map.Entry<String, Object> stringObjectEntry : beanMaps.entrySet()) {
+            //拿到类中所有的字段，包括私有的
+           Field[] fields =  stringObjectEntry.getValue().getClass().getDeclaredFields();
+           //遍历字段，进行set注入
+            for (Field field : fields) {
+               //判断字段是否有MlAutowired的注解
+                if(!field.isAnnotationPresent(MLAutoWired.class)){
+                    continue;
+                }
+                MLAutoWired autoWired =  field.getAnnotation(MLAutoWired.class);
+                //拿到需要注入的来的beanName,待会需要去容器中取
+                String beanName = autoWired.value();
+                //判断是否是自定义的
+                if(StringUtils.isEmpty(beanName)){
+                    beanName = field.getType().getName();
+                }
+                //强制访问
+                field.setAccessible(true);
+                //字段进行set注入
+                try {
+                    field.set(stringObjectEntry.getValue(),beanMaps.get(beanName));
+                } catch (IllegalAccessException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
 
     }
 
     private void doRegistry() {
+        if(classNames.isEmpty()){
+            return;
+        }
+        for (String className : classNames) {
+            try {
+                Class<?> clazz = Class.forName(className);
+                //这边只解析MLController 和MLService的注解类
+                if(clazz.isAnnotationPresent(MLController.class)) {
+                    //得到beanName 首字母小写
+                    String beanName = toLowerFirstCase(clazz.getSimpleName());
+                    if (beanMaps.containsKey(beanName)) {
+                        throw new Exception("The" + beanName + "is exists!");
+                    }
+                    beanMaps.put(beanName, clazz.newInstance());
+                }else if(clazz.isAnnotationPresent(MLService.class)){
+                    //获取到当前类的注解的value值
+                    MLService service =  clazz.getAnnotation(MLService.class);
+                    String beanName = service.value();
+                    //判断是否自定义beanName
+                    if(StringUtils.isEmpty(beanName)){
+                        beanName = toLowerFirstCase(clazz.getSimpleName());
+                    }
+                    if (beanMaps.containsKey(beanName)) {
+                        throw new Exception("The" + beanName + "is exists!");
+                    }
+                    beanMaps.put(beanName, clazz.newInstance());
+
+                }else{
+                    continue;
+                }
+            } catch (Exception e){
+                e.printStackTrace();
+            }
+
+
+        }
 
     }
     private void doScanner(String  packageName) {
@@ -100,5 +212,14 @@ public class MlDispatcherServlet  extends HttpServlet {
             e.printStackTrace();
         }
 
+    }
+
+    private String toLowerFirstCase(String simpleName) {
+        char [] chars = simpleName.toCharArray();
+        //之所以加，是因为大小写字母的ASCII码相差32，
+        // 而且大写字母的ASCII码要小于小写字母的ASCII码
+        //在Java中，对char做算学运算，实际上就是对ASCII码做算学运算
+        chars[0] += 32;
+        return String.valueOf(chars);
     }
 }
