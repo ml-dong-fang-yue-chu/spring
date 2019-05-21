@@ -15,6 +15,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URI;
 import java.net.URL;
@@ -50,12 +51,54 @@ public class MlDispatcherServlet  extends HttpServlet {
     }
 
     @Override
+
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
         doDispatch(req,resp);
     }
 
     private void doDispatch(HttpServletRequest req, HttpServletResponse resp) {
         String url = req.getRequestURI();
+        resp.setHeader("Content-type", "text/html;charset=UTF-8");
+        resp.setCharacterEncoding("UTF-8");
+        if(!handleMappings.containsKey(url)){
+            try {
+                resp.getWriter().write("404 !");
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return;
+        }
+        Method method = handleMappings.get(url);
+        String id = req.getParameter("id");
+  /*      Class<?>[] parameterTypes =  method.getParameterTypes();
+        Object [] params = new Objects[parameterTypes.length];
+        for (int x =0;x <parameterTypes.length;x++) {
+            Class parameterType  = parameterTypes[x];
+            if(parameterType == HttpServletRequest.class ){
+                params[x] =req;
+                continue;
+            }else if(parameterType == HttpServletResponse.class ){
+                params[x] =resp;
+                continue;
+            }else{
+                params[x] = id;
+            }
+        }*/
+        String beanName = toLowerFirstCase(method.getDeclaringClass().getSimpleName());
+        try {
+           Object result = method.invoke(beanMaps.get(beanName),new Object[]{req,resp,id});
+            try {
+                resp.getWriter().write(result.toString());
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        } catch (InvocationTargetException e) {
+            e.printStackTrace();
+        }
+
+
     }
 
     @Override
@@ -90,7 +133,7 @@ public class MlDispatcherServlet  extends HttpServlet {
                     //根路径
                     baseUrl = requestMapping.value();
                 }
-                //获取类中所有的方法
+                //
                 for (Method method : clazz.getMethods()) {
                     //这里只处理公共的方法，遵循oop原则
                    if(!method.isAnnotationPresent(MLRequestMapping.class)){

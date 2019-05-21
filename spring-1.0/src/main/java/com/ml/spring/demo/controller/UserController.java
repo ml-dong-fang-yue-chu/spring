@@ -21,12 +21,18 @@ import javax.servlet.http.HttpServletResponse;
 @MLRequestMapping("user")
 public class UserController {
 
-    @MLAutoWired
+    @MLAutoWired("userService")
     private UserService userService;
 
 
+    @MLRequestMapping("selectById")
     public User selectById(HttpServletRequest request, HttpServletResponse response, @MLRequestParam("id") String id){
        return userService.selectById(id);
+    }
+
+    @MLRequestMapping("add")
+    public int add(HttpServletRequest request, HttpServletResponse response, @MLRequestParam("id") String id){
+        return userService.add(id);
     }
 
 

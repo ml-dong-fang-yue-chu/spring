@@ -12,4 +12,6 @@ import com.ml.spring.demo.pojo.User;
 public interface UserService {
 
     User selectById(String id);
+
+    int add(String id);
 }
